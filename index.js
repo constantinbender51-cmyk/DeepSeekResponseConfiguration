@@ -61,8 +61,6 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
   }
 }
 
-module.exports = { askDeepSeek };
-
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
   // 1. TOC
