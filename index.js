@@ -69,48 +69,64 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
 
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
-  // 1. TOC
+  /* -------------------------------------------------
+   * 1. Build the table of contents
+   * ------------------------------------------------- */
   const tocPrompt = `Create a concise table of contents for a book on "${keywords}" (~${totalPages} pages).  
-    Return ONLY a JSON array like:
-    [{"title":"Chapter 1: Foo","pages":15}, ...]  
-    If you must add prose, include the JSON array on its own line.`;
+Return ONLY a JSON array like:
+[{"title":"Chapter 1: Foo","description":"A brief 1–2 sentence summary of what this chapter covers.","pages":15}, ...]  
+If you must add prose, include the JSON array on its own line.`;
 
   let toc = await askDeepSeek(tocPrompt, null, 1000);
-  // If DeepSpeak gave us text instead of JSON, use a *tiny* secondary prompt
-    if (!Array.isArray(toc)) {
-      console.warn('DeepSeek returned prose; asking it to extract JSON...');
-      const secondPrompt = `Below is the response. Extract and return ONLY the JSON array, nothing else.\n\n${toc}`;
-      toc = await askDeepSeek(secondPrompt, null, 1000);
-    }
 
-  // Final safety net
+  // Fallback: extract JSON if DeepSeek wrapped it in prose
+  if (!Array.isArray(toc)) {
+    console.warn('DeepSeek returned prose; asking it to extract JSON...');
+    const secondPrompt = `Below is the response. Extract and return ONLY the JSON array, nothing else.\n\n${toc}`;
+    toc = await askDeepSeek(secondPrompt, null, 1000);
+  }
+
   if (!Array.isArray(toc)) {
     throw new Error('Could not obtain valid TOC array from DeepSeek');
   }
+
+  /* -------------------------------------------------
+   * 2. Build the markdown skeleton
+   * ------------------------------------------------- */
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
-  toc.forEach((ch, idx) => (bookMarkdown += `${idx + 1}. ${ch.title} (${ch.pages} pp.)\n`));
+  toc.forEach((ch, idx) => {
+    bookMarkdown += `${idx + 1}. ${ch.title} (${ch.pages} pp.)\n`;
+  });
   bookMarkdown += '\n---\n\n';
 
-  // 2. Iterate chapters
+  /* -------------------------------------------------
+   * 3. Iterate chapters
+   * ------------------------------------------------- */
   for (let i = 0; i < toc.length; i++) {
     const ch = toc[i];
 
-    // 2a. Chapter description
-    const descPrompt = `Write a concise 2-sentence description for the chapter "${ch.title}".`;
-    const description = await askDeepSeek(descPrompt, null, 200);
+    /* 3a. Ensure description exists (fallback to 2-sentence description) */
+if (!ch.description) {
+  const descPrompt = `Write a concise description of the contents for the chapter "${ch.title}".`;
+  ch.description = await askDeepSeek(descPrompt, null, 300);
+}
 
-    // 2b. Full chapter
+    // 3b. Write the full chapter
     const chapterPrompt = `You are an expert author.  
-Write **chapter ${i + 1}: ${ch.title}** (${ch.pages} pages) based on this description:\n${description}\n\nReturn well-structured markdown with headings, paragraphs, bullet lists, and code snippets where appropriate. Aim for roughly ${Math.round(ch.pages * 250)} words.`;
+Write **chapter ${i + 1}: ${ch.title}** (${ch.pages} pages) based on this description:
+
+${ch.description}
+
+Return well-structured markdown with headings, paragraphs, bullet lists, and code snippets where appropriate. Aim for roughly ${Math.round(ch.pages * 250)} words.`;
     const chapterText = await askDeepSeek(chapterPrompt, null, ch.pages * 80);
 
-    bookMarkdown += `# ${ch.title}\n\n${chapterText}\n\n---\n\n`;
+    // 3c. Attach to book
+    bookMarkdown += `# ${ch.title}\n\n> ${ch.description}\n\n${chapterText}\n\n---\n\n`;
   }
 
   await redis.set('book:markdown', bookMarkdown);
   return bookMarkdown;
 }
-
 /* ---------- Routes ---------- */
 app.use(express.static(path.join(__dirname, 'public')));
 
