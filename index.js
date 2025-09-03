@@ -45,4 +45,26 @@ async function fetchLecture() {
         }
       );
       return data.choices[0]?.message?.content || null;
-    } catch (err
+    } catch (err) {
+      console.warn(`Attempt ${attempt} failed:`, err.message);
+      if (attempt === maxRetries) return null;
+      await new Promise(r => setTimeout(r, baseDelay * 2 ** (attempt - 1)));
+    }
+  }
+}
+
+// Health-check route
+app.get('/', (_req, res) => res.send('Service alive. GET /lecture to download the lecture.'));
+
+// Lecture route
+app.get('/lecture', async (_req, res) => {
+  const lecture = await fetchLecture();
+  if (!lecture) {
+    return res.status(503).send('Unable to generate lecture from DeepSeek.');
+  }
+  res.set('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(lecture);
+});
+
+// Start server
+app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
