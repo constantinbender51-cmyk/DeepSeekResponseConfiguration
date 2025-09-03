@@ -1,43 +1,39 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Book Generator</title>
+  <meta charset="utf-8"/>
+  <title>AI Book Generator</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    button { padding: 10px 20px; font-size: 16px; }
-    #status { margin-top: 1em; color: green; }
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    #log { background: #111; color: #0f0; padding: .5rem 1rem; height: 300px; overflow-y: auto; font-size: 13px; white-space: pre; }
+    button { padding: .5rem 1rem; font-size: 1rem; }
   </style>
 </head>
 <body>
-  <h1>Redis Book Generator</h1>
-
-  <label>Keywords: <input id="keywords" value="Machine Learning" /></label><br><br>
-  <label>Pages: <input id="pages" type="number" value="100" /></label><br><br>
-
-  <button onclick="generateBook()">Generate Book</button>
-  <button onclick="downloadBook()" id="dlBtn" style="display:none;">Download book.md</button>
-
-  <div id="status"></div>
+  <h1>AI Book Generator</h1>
+  <label>Keywords: <input id="keywords" value="Artificial Intelligence"/></label>
+  <label>Pages: <input id="pages" type="number" value="120" min="10" max="500"/></label>
+  <button onclick="generate()">Generate</button>
+  <button onclick="downloadBook()">Download</button>
+  <h2>Live log</h2>
+  <div id="log"></div>
 
   <script>
-    async function generateBook() {
-      const kw  = document.getElementById('keywords').value;
-      const pg  = document.getElementById('pages').value;
-      document.getElementById('status').textContent = 'Generating… this may take a minute.';
-      const res = await fetch(`/generate?keywords=${encodeURIComponent(kw)}&pages=${pg}`);
-      const json = await res.json();
-      if (json.ok) {
-        document.getElementById('status').textContent = 'Book ready!';
-        document.getElementById('dlBtn').style.display = 'inline-block';
-      } else {
-        document.getElementById('status').textContent = 'Error: ' + json.error;
-      }
-    }
+    const logBox = document.getElementById('log');
+    function append(line) { logBox.textContent += line + '\n'; logBox.scrollTop = logBox.scrollHeight; }
 
-    function downloadBook() {
-      window.location = '/download';
+    const evt = new EventSource('/logs');
+    evt.onmessage = e => append(e.data);
+
+    async function generate() {
+      const kw = document.getElementById('keywords').value || 'Artificial Intelligence';
+      const pg = document.getElementById('pages').value || 120;
+      append('[HTTP] Requesting book generation...');
+      const r = await fetch(`/generate?keywords=${encodeURIComponent(kw)}&pages=${pg}`);
+      const j = await r.json();
+      append(j.ok ? '[HTTP] Generation complete.' : '[HTTP] Generation failed: ' + j.error);
     }
+    function downloadBook() { location.href = '/download'; }
   </script>
 </body>
 </html>
