@@ -21,54 +21,59 @@ if (!DEEPSEEK_API_KEY) {
 /* ---------- DeepSeek helpers ---------- */
 
 /**
- * Calls DeepSeek and safely parses JSON even when wrapped in ```json … ```
- * @param systemPrompt  System prompt to DeepSeek
- * @param userPrompt    User prompt (can be null)
- * @param maxTokens     Max tokens for the response
- * @returns {Promise<any>} Parsed JSON object
+ * Calls DeepSeek and guarantees a **parsed JSON object**.
+ * Retries up to `maxRetries` times if the answer isn’t JSON.
  */
-async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
+async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000, maxRetries = 3) {
   const messages = [{ role: 'system', content: systemPrompt }];
   if (userPrompt) messages.push({ role: 'user', content: userPrompt });
 
-  const { data } = await axios.post(
-    process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
-    {
-      model: 'deepseek-chat',
-      messages,
-      temperature: 0.3,
-      max_tokens: maxTokens
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        'Content-Type': 'application/json'
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const { data } = await axios.post(
+        process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
+        {
+          model: 'deepseek-chat',
+          messages,
+          temperature: 0.0,            // deterministic
+          max_tokens: maxTokens
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      let raw = data.choices[0]?.message?.content?.trim() || '';
+
+      // Strip ```json ... ``` wrapper if present
+      const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+      if (codeBlockMatch) raw = codeBlockMatch[1];
+
+      // Attempt to parse
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn(`JSON parse attempt ${attempt} failed`, err.message);
+      if (attempt === maxRetries) {
+        throw new Error(`DeepSeek did not return valid JSON after ${maxRetries} tries`);
       }
+      // wait 1s, 2s, 4s …
+      await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1)));
     }
-  );
-
-  // Raw text returned by DeepSeek
-  let raw = data.choices[0]?.message?.content?.trim() || '';
-
-  // Remove ```json ... ``` wrapper (with or without 'json' label)
-  const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
-  if (codeBlockMatch) raw = codeBlockMatch[1];
-
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Invalid JSON returned by DeepSeek: ${raw}`);
   }
 }
 
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
   // 1. TOC
-  const tocPrompt = `You are a non-fiction book planner.  
-Keywords: ${keywords}  
-Total pages: ${totalPages}  
-Return ONLY a JSON array of objects: [{"title":"Chapter 1: ...", "pages":12}, ...].  
-Make chapters logical and sum page counts to ≈ ${totalPages}.`;
+  const tocPrompt = `You are a machine. Return ONLY raw JSON.
+Keywords: ${keywords}
+Total pages: ${totalPages}
+Return a JSON array like:
+[{"title":"Chapter 1: Introduction","pages":15}, ...]
+Do NOT add explanations, markdown, or code blocks.`;
   const toc = await askDeepSeek(tocPrompt, null, 1000);
 
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
