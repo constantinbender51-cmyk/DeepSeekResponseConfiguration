@@ -34,7 +34,7 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
     model: 'deepseek-chat',
     messages,
     temperature: 0.0,
-    max_tokens,
+    maxTokens,
     response_format: { type: 'json_object' }   // <-- NEW
   },
   {
