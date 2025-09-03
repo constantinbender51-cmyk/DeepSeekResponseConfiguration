@@ -20,51 +20,32 @@ if (!DEEPSEEK_API_KEY) {
 
 /* ---------- DeepSeek helpers ---------- */
 
-/**
- * Calls DeepSeek and returns *either* parsed JSON *or* null.
- * Falls back to extracting a JSON array/object from the text.
- */
-async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
-  const messages = [{ role: 'system', content: systemPrompt }];
-  if (userPrompt) messages.push({ role: 'user', content: userPrompt });
+async function askDeepSeek(messages, maxTokens = 2000) {
+  const url = process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions';
 
-  const { data } = await axios.post(
-  process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
-  {
+  // Never exceed the model’s limit
+  maxTokens = Math.min(maxTokens, 8000);
+
+  const payload = {
     model: 'deepseek-chat',
     messages,
-    temperature: 0.0,
+    temperature: 0.25,
     max_tokens: maxTokens,
-    response_format: { type: 'json_object' }   // <-- NEW
-  },
-  {
-    headers: {
-      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      'Content-Type': 'application/json'
-    }
-  }
-);
-  let raw = data.choices[0]?.message?.content?.trim() || '';
+    response_format: { type: 'json_object' }
+  };
 
-  // Strip ```json … ``` if present
-  const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
-  if (codeBlockMatch) raw = codeBlockMatch[1].trim();
-
-  // 1. Try direct JSON
   try {
-    return JSON.parse(raw);
-  } catch (_) { /* ignore */ }
-
-  // 2. Look for JSON array `[...]` or object `{...}` in the text
-  const jsonLike = raw.match(/(\[.*?\]|\{.*?\})/s);
-  if (jsonLike) {
-    try {
-      return JSON.parse(jsonLike[0]);
-    } catch (_) { /* ignore */ }
+    const { data } = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    return JSON.parse(data.choices[0]?.message?.content);
+  } catch (err) {
+    console.error('DeepSeek request failed:', err.response?.data || err.message);
+    throw err;
   }
-
-  // 3. If nothing worked, return the raw string so caller can decide
-  return raw;
 }
 
 async function buildChapterBlueprint(chapterTitle, chapterPages, description) {
