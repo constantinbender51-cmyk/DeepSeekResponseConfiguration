@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Book Generator</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    button { padding: 10px 20px; font-size: 16px; }
+    #status { margin-top: 1em; color: green; }
+  </style>
+</head>
+<body>
+  <h1>Redis Book Generator</h1>
+
+  <label>Keywords: <input id="keywords" value="Machine Learning" /></label><br><br>
+  <label>Pages: <input id="pages" type="number" value="100" /></label><br><br>
+
+  <button onclick="generateBook()">Generate Book</button>
+  <button onclick="downloadBook()" id="dlBtn" style="display:none;">Download book.md</button>
+
+  <div id="status"></div>
+
+  <script>
+    async function generateBook() {
+      const kw  = document.getElementById('keywords').value;
+      const pg  = document.getElementById('pages').value;
+      document.getElementById('status').textContent = 'Generating… this may take a minute.';
+      const res = await fetch(`/generate?keywords=${encodeURIComponent(kw)}&pages=${pg}`);
+      const json = await res.json();
+      if (json.ok) {
+        document.getElementById('status').textContent = 'Book ready!';
+        document.getElementById('dlBtn').style.display = 'inline-block';
+      } else {
+        document.getElementById('status').textContent = 'Error: ' + json.error;
+      }
+    }
+
+    function downloadBook() {
+      window.location = '/download';
+    }
+  </script>
+</body>
+</html>
