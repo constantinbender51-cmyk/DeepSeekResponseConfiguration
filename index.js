@@ -45,14 +45,19 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
       }
     }
   );
-let raw = data.choices[0].message.content.trim()
-           .replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1')
-           .replace(/,\s*$/gm, '');          // remove trailing commas at EOL
+let raw = data.choices[0].message.content.trim();
+console.log('Raw DeepSeek JSON >>>', raw, '<<<');
 
-// Build one array string
-const jsonArray = '[' + raw.replace(/\n/g, '').replace(/}{/g, '},{') + ']';
+// Strip any ```json ... ``` or ``` ... ``` wrapper
+raw = raw.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1').trim();
 
-return JSON.parse(jsonArray);
+try {
+  return JSON.parse(raw);
+} catch (err) {
+  console.error('JSON parse failed on >>>', raw, '<<<');
+  throw err;
+}
+
 }
 
 /* ---------- Blueprint helper ---------- */
@@ -78,11 +83,10 @@ Return ONLY a JSON object with this exact shape:
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
   // 1. TOC
-  const tocPrompt = `You are a book planner.  
-Keywords: ${keywords}  
-Total pages: ${totalPages}  
-Return ONLY a JSON array like:
-[{"title":"Chapter 1: Foo","pages":15}, ...]`;
+  const tocPrompt =
+  `System: You are a strict JSON generator.\n` +
+  `Task: Build a table of contents for a book on "${keywords}".\n` +
+  `Output: JSON array [{"title":"Chapter X: Y","pages":int}] that totals ≈ ${totalPages} pages, no prose, no markdown.`;
   const toc = await askDeepSeek(tocPrompt, '', 1000);
 
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
