@@ -46,12 +46,18 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
     }
   );
 let raw = data.choices[0].message.content.trim();
+console.log('Raw DeepSeek JSON >>>', raw, '<<<');
 
-// Remove ```json ... ``` wrapper (with or without language tag)
-const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i);
-if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+// Strip any ```json ... ``` or ``` ... ``` wrapper
+raw = raw.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1').trim();
 
-return JSON.parse(raw);
+try {
+  return JSON.parse(raw);
+} catch (err) {
+  console.error('JSON parse failed on >>>', raw, '<<<');
+  throw err;
+}
+
 }
 
 /* ---------- Blueprint helper ---------- */
