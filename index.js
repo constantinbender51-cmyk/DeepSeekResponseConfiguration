@@ -45,8 +45,13 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
       }
     }
   );
+let raw = data.choices[0].message.content.trim();
 
-  return JSON.parse(data.choices[0].message.content);
+// Remove ```json ... ``` wrapper (with or without language tag)
+const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i);
+if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+
+return JSON.parse(raw);
 }
 
 /* ---------- Blueprint helper ---------- */
