@@ -21,61 +21,72 @@ if (!DEEPSEEK_API_KEY) {
 /* ---------- DeepSeek helpers ---------- */
 
 /**
- * Calls DeepSeek and guarantees a **parsed JSON object**.
- * Retries up to `maxRetries` times if the answer isn’t JSON.
+ * Calls DeepSeek and returns *either* parsed JSON *or* null.
+ * Falls back to extracting a JSON array/object from the text.
  */
-async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000, maxRetries = 3) {
+async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
   const messages = [{ role: 'system', content: systemPrompt }];
   if (userPrompt) messages.push({ role: 'user', content: userPrompt });
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const { data } = await axios.post(
-        process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
-        {
-          model: 'deepseek-chat',
-          messages,
-          temperature: 0.0,            // deterministic
-          max_tokens: maxTokens
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      let raw = data.choices[0]?.message?.content?.trim() || '';
-
-      // Strip ```json ... ``` wrapper if present
-      const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
-      if (codeBlockMatch) raw = codeBlockMatch[1];
-
-      // Attempt to parse
-      return JSON.parse(raw);
-    } catch (err) {
-      console.warn(`JSON parse attempt ${attempt} failed`, err.message);
-      if (attempt === maxRetries) {
-        throw new Error(`DeepSeek did not return valid JSON after ${maxRetries} tries`);
+  const { data } = await axios.post(
+    process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
+    {
+      model: 'deepseek-chat',
+      messages,
+      temperature: 0.0,
+      max_tokens: maxTokens
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        'Content-Type': 'application/json'
       }
-      // wait 1s, 2s, 4s …
-      await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1)));
     }
+  );
+
+  let raw = data.choices[0]?.message?.content?.trim() || '';
+
+  // Strip ```json … ``` if present
+  const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+
+  // 1. Try direct JSON
+  try {
+    return JSON.parse(raw);
+  } catch (_) { /* ignore */ }
+
+  // 2. Look for JSON array `[...]` or object `{...}` in the text
+  const jsonLike = raw.match(/(\[.*?\]|\{.*?\})/s);
+  if (jsonLike) {
+    try {
+      return JSON.parse(jsonLike[0]);
+    } catch (_) { /* ignore */ }
   }
+
+  // 3. If nothing worked, return the raw string so caller can decide
+  return raw;
 }
 
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
   // 1. TOC
-  const tocPrompt = `You are a machine. Return ONLY raw JSON.
-Keywords: ${keywords}
-Total pages: ${totalPages}
-Return a JSON array like:
-[{"title":"Chapter 1: Introduction","pages":15}, ...]
-Do NOT add explanations, markdown, or code blocks.`;
-  const toc = await askDeepSeek(tocPrompt, null, 1000);
+  const tocPrompt = `Create a concise table of contents for a book on "${keywords}" (~${totalPages} pages).  
+    Return ONLY a JSON array like:
+    [{"title":"Chapter 1: Foo","pages":15}, ...]  
+    If you must add prose, include the JSON array on its own line.`;
 
+  let toc = await askDeepSeek(tocPrompt, null, 1000);
+  // If DeepSpeak gave us text instead of JSON, use a *tiny* secondary prompt
+    if (!Array.isArray(toc)) {
+      console.warn('DeepSeek returned prose; asking it to extract JSON...');
+      const secondPrompt = `Below is the response. Extract and return ONLY the JSON array, nothing else.\n\n${toc}`;
+      toc = await askDeepSeek(secondPrompt, null, 1000);
+    }
+
+  // Final safety net
+  if (!Array.isArray(toc)) {
+    throw new Error('Could not obtain valid TOC array from DeepSeek');
+  }
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
   toc.forEach((ch, idx) => (bookMarkdown += `${idx + 1}. ${ch.title} (${ch.pages} pp.)\n`));
   bookMarkdown += '\n---\n\n';
