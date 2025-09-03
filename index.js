@@ -19,17 +19,49 @@ if (!DEEPSEEK_API_KEY) {
 }
 
 /* ---------- DeepSeek helpers ---------- */
+
+/**
+ * Calls DeepSeek and safely parses JSON even when wrapped in ```json … ```
+ * @param systemPrompt  System prompt to DeepSeek
+ * @param userPrompt    User prompt (can be null)
+ * @param maxTokens     Max tokens for the response
+ * @returns {Promise<any>} Parsed JSON object
+ */
 async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
   const messages = [{ role: 'system', content: systemPrompt }];
   if (userPrompt) messages.push({ role: 'user', content: userPrompt });
 
   const { data } = await axios.post(
-    DEEPSEEK_URL,
-    { model: 'deepseek-chat', messages, temperature: 0.3, max_tokens: maxTokens },
-    { headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' } }
+    process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
+    {
+      model: 'deepseek-chat',
+      messages,
+      temperature: 0.3,
+      max_tokens: maxTokens
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    }
   );
-  return data.choices[0]?.message?.content?.trim();
+
+  // Raw text returned by DeepSeek
+  let raw = data.choices[0]?.message?.content?.trim() || '';
+
+  // Remove ```json ... ``` wrapper (with or without 'json' label)
+  const codeBlockMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  if (codeBlockMatch) raw = codeBlockMatch[1];
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid JSON returned by DeepSeek: ${raw}`);
+  }
 }
+
+module.exports = { askDeepSeek };
 
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
