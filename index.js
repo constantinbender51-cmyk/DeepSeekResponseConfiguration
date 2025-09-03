@@ -1,3 +1,5 @@
+// index.js  —  Railway-ready Redis-Book-Generator
+// Generates a book via DeepSeek, stores it in Redis, serves download button
 require('dotenv').config();
 const express = require('express');
 const axios   = require('axios');
@@ -18,26 +20,27 @@ if (!DEEPSEEK_API_KEY) {
   process.exit(1);
 }
 
-/* ---------- DeepSeek helpers ---------- */
-
+/* ---------- DeepSeek helper ---------- */
 async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
-  maxTokens = Math.max(1, Math.min(maxTokens, 8000)); // ensure 1…8000
+  maxTokens = Math.max(1, Math.min(maxTokens, 8000)); // 1…8000 inclusive
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: userPrompt }
+  ];
 
   const { data } = await axios.post(
-    'https://api.deepseek.com/v1/chat/completions',
+    DEEPSEEK_URL,
     {
       model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt }
-      ],
+      messages,
       temperature: 0.25,
       max_tokens: maxTokens,
       response_format: { type: 'json_object' }
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
         'Content-Type': 'application/json'
       }
     }
@@ -46,11 +49,12 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
   return JSON.parse(data.choices[0].message.content);
 }
 
-async function buildChapterBlueprint(chapterTitle, chapterPages, description) {
+/* ---------- Blueprint helper ---------- */
+async function buildChapterBlueprint(chapterTitle, chapterPages) {
   const prompt = `You are an expert technical author.  
 Create a detailed, hierarchical outline for the upcoming chapter:  
 "${chapterTitle}" (${chapterPages} pages ≈ ${Math.round(chapterPages * 250)} words).  
-The outline must be a JSON object with this exact shape:  
+Return ONLY a JSON object with this exact shape:  
 {
   "sections": [
     {
@@ -61,55 +65,39 @@ The outline must be a JSON object with this exact shape:
       "keyTakeaways": ["string"]
     }
   ]
-}
-Be exhaustive; every page should have at least one section or subsection.  
-Return ONLY the raw JSON, no prose.`;
-
-  return await askDeepSeek(prompt, null, 800);
+}`;
+  return await askDeepSeek(prompt, '', 800);
 }
 
 /* ---------- Book generation ---------- */
 async function generateBook(keywords, totalPages) {
   // 1. TOC
-  const tocPrompt = `Create a concise table of contents for a book on "${keywords}" (~${totalPages} pages).  
-    Return ONLY a JSON array like:
-    [{"title":"Chapter 1: Foo","pages":15}, ...]  
-    If you must add prose, include the JSON array on its own line.`;
+  const tocPrompt = `You are a book planner.  
+Keywords: ${keywords}  
+Total pages: ${totalPages}  
+Return ONLY a JSON array like:
+[{"title":"Chapter 1: Foo","pages":15}, ...]`;
+  const toc = await askDeepSeek(tocPrompt, '', 1000);
 
-  let toc = await askDeepSeek(tocPrompt, null, 1000);
-  // If DeepSpeak gave us text instead of JSON, use a *tiny* secondary prompt
-    if (!Array.isArray(toc)) {
-      console.warn('DeepSeek returned prose; asking it to extract JSON...');
-      const secondPrompt = `Below is the response. Extract and return ONLY the JSON array, nothing else.\n\n${toc}`;
-      toc = await askDeepSeek(secondPrompt, null, 1000);
-    }
-
-  // Final safety net
-  if (!Array.isArray(toc)) {
-    throw new Error('Could not obtain valid TOC array from DeepSeek');
-  }
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
   toc.forEach((ch, idx) => (bookMarkdown += `${idx + 1}. ${ch.title} (${ch.pages} pp.)\n`));
   bookMarkdown += '\n---\n\n';
 
   // 2. Iterate chapters
-  for (let i = 0; i < toc.length; i++) {
-    const ch = toc[i];
+  for (const ch of toc) {
+    const blueprint = await buildChapterBlueprint(ch.title, ch.pages);
 
-    // 2a. Chapter description
-    const descPrompt = `Write a concise 2-sentence description for the chapter "${ch.title}".`;
-    const description = await askDeepSeek(descPrompt, null, 200);
+    const fullPrompt = `Using the following blueprint, write the complete markdown chapter "${ch.title}" (${ch.pages} pages).  
+Expand every bullet into full paragraphs (≈ ${Math.round(ch.pages * 250)} words).  
+Insert code snippets as fenced blocks.  
+Keep exact hierarchy.  
+Blueprint: ${JSON.stringify(blueprint, null, 2)}`;
 
-    const blueprint = await buildChapterBlueprint(ch.title, ch.pages, description);
-
-    const fullPrompt = `Using the following detailed blueprint, write the complete markdown chapter **"${ch.title}"** (${ch.pages} pages).  
-    Expand every bullet into full paragraphs (≈ 250 words per page).  
-    Insert all requested code snippets as fenced blocks with brief explanations.  
-    Keep the exact section/sub-section hierarchy; do NOT add new top-level sections.  
-    Blueprint: ${JSON.stringify(blueprint, null, 2)}`;
-
-    const chapterText = await askDeepSeek(fullPrompt, null, ch.pages * 90);
-
+    const chapterText = await askDeepSeek(
+      fullPrompt,
+      '',
+      Math.min(400 + ch.pages * 250, 8000)
+    );
     bookMarkdown += `# ${ch.title}\n\n${chapterText}\n\n---\n\n`;
   }
 
@@ -121,8 +109,8 @@ async function generateBook(keywords, totalPages) {
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/generate', async (req, res) => {
-  const keywords  = req.query.keywords || 'Artificial Intelligence';
-  const totalPages = parseInt(req.query.pages) || 120;
+  const keywords   = req.query.keywords || 'Machine Learning';
+  const totalPages = parseInt(req.query.pages) || 50;
 
   try {
     await generateBook(keywords, totalPages);
