@@ -45,19 +45,14 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
       }
     }
   );
-let raw = data.choices[0].message.content.trim();
-console.log('Raw DeepSeek JSON >>>', raw, '<<<');
+let raw = data.choices[0].message.content.trim()
+           .replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1')
+           .replace(/,\s*$/gm, '');          // remove trailing commas at EOL
 
-// Strip any ```json ... ``` or ``` ... ``` wrapper
-raw = raw.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1').trim();
+// Build one array string
+const jsonArray = '[' + raw.replace(/\n/g, '').replace(/}{/g, '},{') + ']';
 
-try {
-  return JSON.parse(raw);
-} catch (err) {
-  console.error('JSON parse failed on >>>', raw, '<<<');
-  throw err;
-}
-
+return JSON.parse(jsonArray);
 }
 
 /* ---------- Blueprint helper ---------- */
