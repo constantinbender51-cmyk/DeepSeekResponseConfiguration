@@ -20,32 +20,30 @@ if (!DEEPSEEK_API_KEY) {
 
 /* ---------- DeepSeek helpers ---------- */
 
-async function askDeepSeek(messages, maxTokens = 2000) {
-  const url = process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions';
+async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 2000) {
+  maxTokens = Math.max(1, Math.min(maxTokens, 8000)); // ensure 1…8000
 
-  // Never exceed the model’s limit
-  maxTokens = Math.min(maxTokens, 8000);
-
-  const payload = {
-    model: 'deepseek-chat',
-    messages,
-    temperature: 0.25,
-    max_tokens: maxTokens,
-    response_format: { type: 'json_object' }
-  };
-
-  try {
-    const { data } = await axios.post(url, payload, {
+  const { data } = await axios.post(
+    'https://api.deepseek.com/v1/chat/completions',
+    {
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt }
+      ],
+      temperature: 0.25,
+      max_tokens: maxTokens,
+      response_format: { type: 'json_object' }
+    },
+    {
       headers: {
         Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         'Content-Type': 'application/json'
       }
-    });
-    return JSON.parse(data.choices[0]?.message?.content);
-  } catch (err) {
-    console.error('DeepSeek request failed:', err.response?.data || err.message);
-    throw err;
-  }
+    }
+  );
+
+  return JSON.parse(data.choices[0].message.content);
 }
 
 async function buildChapterBlueprint(chapterTitle, chapterPages, description) {
