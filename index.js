@@ -69,8 +69,7 @@ Keywords: ${keywords}
 Total pages: ${totalPages}  
 Return ONLY a JSON array of objects: [{"title":"Chapter 1: ...", "pages":12}, ...].  
 Make chapters logical and sum page counts to ≈ ${totalPages}.`;
-  const tocJson = await askDeepSeek(tocPrompt, null, 1000);
-  const toc = JSON.parse(tocJson);
+  const toc = await askDeepSeek(tocPrompt, null, 1000);
 
   let bookMarkdown = `# ${keywords}\n\nGenerated automatically with DeepSeek.\n\n## Table of Contents\n\n`;
   toc.forEach((ch, idx) => (bookMarkdown += `${idx + 1}. ${ch.title} (${ch.pages} pp.)\n`));
