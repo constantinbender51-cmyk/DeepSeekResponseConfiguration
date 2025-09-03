@@ -29,21 +29,21 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
   if (userPrompt) messages.push({ role: 'user', content: userPrompt });
 
   const { data } = await axios.post(
-    process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
-    {
-      model: 'deepseek-chat',
-      messages,
-      temperature: 0.0,
-      max_tokens: maxTokens
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
+  process.env.DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions',
+  {
+    model: 'deepseek-chat',
+    messages,
+    temperature: 0.0,
+    max_tokens,
+    response_format: { type: 'json_object' }   // <-- NEW
+  },
+  {
+    headers: {
+      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      'Content-Type': 'application/json'
     }
-  );
-
+  }
+);
   let raw = data.choices[0]?.message?.content?.trim() || '';
 
   // Strip ```json … ``` if present
@@ -65,6 +65,28 @@ async function askDeepSeek(systemPrompt, userPrompt, maxTokens = 4000) {
 
   // 3. If nothing worked, return the raw string so caller can decide
   return raw;
+}
+
+async function buildChapterBlueprint(chapterTitle, chapterPages, description) {
+  const prompt = `You are an expert technical author.  
+Create a detailed, hierarchical outline for the upcoming chapter:  
+"${chapterTitle}" (${chapterPages} pages ≈ ${Math.round(chapterPages * 250)} words).  
+The outline must be a JSON object with this exact shape:  
+{
+  "sections": [
+    {
+      "heading": "string",
+      "subsections": ["string"],
+      "codeSnippets": ["brief description"],
+      "datasets": ["brief description"],
+      "keyTakeaways": ["string"]
+    }
+  ]
+}
+Be exhaustive; every page should have at least one section or subsection.  
+Return ONLY the raw JSON, no prose.`;
+
+  return await askDeepSeek(prompt, null, 800);
 }
 
 /* ---------- Book generation ---------- */
@@ -99,10 +121,15 @@ async function generateBook(keywords, totalPages) {
     const descPrompt = `Write a concise 2-sentence description for the chapter "${ch.title}".`;
     const description = await askDeepSeek(descPrompt, null, 200);
 
-    // 2b. Full chapter
-    const chapterPrompt = `You are an expert author.  
-Write **chapter ${i + 1}: ${ch.title}** (${ch.pages} pages) based on this description:\n${description}\n\nReturn well-structured markdown with headings, paragraphs, bullet lists, and code snippets where appropriate. Aim for roughly ${Math.round(ch.pages * 250)} words.`;
-    const chapterText = await askDeepSeek(chapterPrompt, null, ch.pages * 80);
+    const blueprint = await buildChapterBlueprint(ch.title, ch.pages, description);
+
+    const fullPrompt = `Using the following detailed blueprint, write the complete markdown chapter **"${ch.title}"** (${ch.pages} pages).  
+    Expand every bullet into full paragraphs (≈ 250 words per page).  
+    Insert all requested code snippets as fenced blocks with brief explanations.  
+    Keep the exact section/sub-section hierarchy; do NOT add new top-level sections.  
+    Blueprint: ${JSON.stringify(blueprint, null, 2)}`;
+
+    const chapterText = await askDeepSeek(fullPrompt, null, ch.pages * 90);
 
     bookMarkdown += `# ${ch.title}\n\n${chapterText}\n\n---\n\n`;
   }
